@@ -11,9 +11,12 @@ This is a thin, FAIL-OPEN shell wrapper:
   ``INFRA_SERVER_URL`` — i.e. today's shared-shim behaviour. Nothing breaks.
 - ``release()`` never raises and is safe to call for an unknown run_id.
 
-The broker lives on the deployment box at ``$UCL_INFRA_DIR`` (default
-``/cs/student/project_msc/2025/csml/sruppage/ucl-infra``); override with the
-``UCL_INFRA_DIR`` env var.
+The broker scripts (``claim-gpu.sh`` / ``release-gpu.sh`` / ``gpu-leases.sh``)
+live on the deployment box; point at them with the ``UCL_INFRA_DIR`` env var
+(default ``./ucl-infra`` relative to the working directory). When the dir or its
+scripts are absent, claim() returns "fallback" and the caller uses the static
+``INFRA_SERVER_URL`` shim — so an unset/wrong path degrades gracefully, never
+crashes.
 """
 from __future__ import annotations
 
@@ -27,7 +30,9 @@ from typing import Optional
 
 from loguru import logger
 
-_DEFAULT_DIR = "/cs/student/project_msc/2025/csml/sruppage/ucl-infra"
+# Default is relative + generic; the real broker location is supplied via
+# UCL_INFRA_DIR on the deployment box. A missing dir degrades to "fallback".
+_DEFAULT_DIR = "./ucl-infra"
 
 
 def _enabled() -> bool:
