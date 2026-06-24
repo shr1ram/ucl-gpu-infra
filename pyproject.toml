@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ucl-gpu-infra"
-version = "0.1.0"
+version = "0.2.0"
 description = "Shared UCL GPU broker + experiment-submission infra (gpu_broker, stage6_infra, run_poller)"
 requires-python = ">=3.10"
 dependencies = [
@@ -20,5 +20,6 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 # Ship the experiment-infra shell scripts as package data so find_infra_scripts()
-# resolves them with zero env wiring on any install.
-ucl_gpu_infra = ["scripts/*.sh"]
+# resolves them with zero env wiring on any install. Also ship the secrets
+# template so `python -m` consumers can locate the example without the repo.
+ucl_gpu_infra = ["scripts/*.sh", "secrets.env.template"]

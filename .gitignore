@@ -5,3 +5,8 @@ __pycache__/
 .pytest_cache/
 build/
 dist/
+
+# never commit filled-in secrets (only the .template is tracked)
+secrets.env
+*.secrets.env
+.config/

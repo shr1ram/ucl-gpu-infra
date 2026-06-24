@@ -25,6 +25,28 @@ pip install "git+ssh://git@github.com/<you>/ucl-gpu-infra@v0.1.0"
 | `gpu_broker` | Claim/release a dedicated GPU per run via the on-demand broker. Fail-open: no broker installed → `"fallback"`, caller uses the static shim. |
 | `stage6_infra` | Build a `Receipt`, locate the experiment-infra scripts (shipped as package data), push code + submit a run, query status. Never raises. |
 | `run_poller` | OMC-free polling: `list_runs()` (unioned across the static shim + every broker lease shim), `filter_runs_by_workdir()`, `is_terminal()`, and a `RunPoller` convenience wrapper. |
+| `secrets` | Shared-secret loader: `load_secrets()` reads ONE git-ignored box-local file (LLM key, infra key, …) into `os.environ`, referenced by every consumer. |
+
+## Shared secrets (one file, no secrets in git)
+
+The real secrets live in exactly **one** git-ignored file on the box; both
+consumer repos load it through this package — no copies, no keys in any repo.
+
+```bash
+# one-time, on the box:
+mkdir -p ~/.config/ucl-gpu-infra
+cp secrets.env.template ~/.config/ucl-gpu-infra/secrets.env   # then fill in real values
+```
+
+```python
+from ucl_gpu_infra import load_secrets
+report = load_secrets()   # → os.environ; report lists set/skipped/empty (names only)
+```
+
+- Path resolves from `$UCL_GPU_INFRA_SECRETS`, else `~/.config/ucl-gpu-infra/secrets.env`.
+- `override=False` (default) means an already-set env wins — safe to call at startup.
+- `secrets.env.template` (committed, no values) documents the shape. The filled-in
+  `secrets.env` is git-ignored and must never be committed.
 
 ## Usage
 
