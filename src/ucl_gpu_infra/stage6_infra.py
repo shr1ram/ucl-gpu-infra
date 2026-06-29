@@ -42,9 +42,15 @@ _REMOTE_PATH = re.compile(r"(?:remote path|remote dest)[^\n]*?[`'\"]([\w][\w./+-
 # interpreters too — ``python3`` / ``python3.11`` (the ``\b`` after ``python``
 # never matched ``python3``, which silently dropped #156 to the agent runner),
 # and a leading ``. .venv/bin/activate &&`` that experiment receipts commonly emit.
+# It also tolerates inline ``VAR=val`` env assignments before the interpreter
+# (e.g. ``cd exp && LR=0.05 python train.py``) — a hill-climbing proposer sets the
+# candidate's hyperparameters this way, and without this the env prefix pushed the
+# interpreter token past the match, dropping the whole command (so every iteration
+# silently re-ran the default, and the loop could never climb).
 # The command body, sans surrounding anchors — reused by both patterns below.
 _CMD_BODY = (
     r"(?:cd\s+\S+\s*&&\s*)?(?:\.?\s*\S*activate\s*&&\s*)?"
+    r"(?:[A-Za-z_][A-Za-z0-9_]*=\S+\s+)*"
     r"(?:python[0-9.]*|bash|accelerate|torchrun|uv(?:\s+run)?)\b"
 )
 # (1) a whole line that IS the command (optionally one wrapping backtick).
