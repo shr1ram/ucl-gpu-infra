@@ -40,3 +40,27 @@ def test_submit_without_scripts_is_structured_failure():
 
 def test_query_status_without_creds_returns_empty():
     assert s6.query_status("run_x", {}, env={}) == {}
+
+
+def test_skip_push_honored_from_submission_env(monkeypatch):
+    """INFRA_SKIP_PUSH passed via env= must control the subprocess, not just
+    the parent os.environ (cubic PR#3 P2)."""
+    import ucl_gpu_infra.stage6_infra as s6
+    calls = []
+
+    def fake_run(args, env, timeout=320.0):
+        calls.append(args)
+        return 0, '{"run_id": "run_x"}'
+
+    monkeypatch.setattr(s6, "_run", fake_run)
+    monkeypatch.delenv("INFRA_SKIP_PUSH", raising=False)
+    monkeypatch.delenv("STAGE6_SKIP_PUSH", raising=False)
+    r = s6.Receipt(smoke_cmd="python x.py", code_dir="/tmp/c", remote_dest="d")
+    push_path, submit_path = "/scripts/push.sh", "/scripts/submit.sh"
+    s6.submit(r, {"fast_push_code.sh": push_path, "fast_submit.sh": submit_path},
+              config_path="", env={"INFRA_SERVER_URL": "u", "INFRA_SESSION_KEY": "k",
+                                    "INFRA_SKIP_PUSH": "push"})
+    # each call is ["bash", <script_path>, ...]; assert the PUSH script never ran
+    ran_scripts = [a[1] for a in calls if len(a) > 1]
+    assert push_path not in ran_scripts, f"push not skipped via env=; ran {ran_scripts}"
+    assert submit_path in ran_scripts, "submit should still run"
