@@ -22,13 +22,21 @@ while [ $# -gt 0 ]; do
     --git-commit)      GIT_COMMIT="${2:-}"; shift 2 ;;
     --estimated-hours) ESTIMATED_HOURS="${2:-}"; shift 2 ;;
     --use-spot)        USE_SPOT="${2:-}"; shift 2 ;;
-    --retry-until-up)  RETRY_UNTIL_UP="${2:-}"; shift 2 ;;
+    --retry-until-up)  RETRY_UNTIL_UP="true"; shift ;;
     *) shift ;;
   esac
 done
 URL="${INFRA_SERVER_URL:?INFRA_SERVER_URL not set}"
 KEY="${INFRA_SESSION_KEY:?INFRA_SESSION_KEY not set}"
 [ -n "$CMD" ] || { echo '{"error":"--cmd is required"}' >&2; exit 1; }
+# validate numerics here so a bad value is a clear error, not a python
+# traceback surfacing through set -euo pipefail (cubic P2)
+if [ -n "$RANDOM_SEED" ] && ! [[ "$RANDOM_SEED" =~ ^-?[0-9]+$ ]]; then
+  echo '{"error":"--random-seed must be an integer"}' >&2; exit 1
+fi
+if [ -n "$ESTIMATED_HOURS" ] && ! [[ "$ESTIMATED_HOURS" =~ ^[0-9]*\.?[0-9]+$ ]]; then
+  echo '{"error":"--estimated-hours must be a number"}' >&2; exit 1
+fi
 
 # Read an optional config file's contents into the metadata (best-effort).
 cfg_json='{}'
