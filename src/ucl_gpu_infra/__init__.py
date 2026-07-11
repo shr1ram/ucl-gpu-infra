@@ -20,4 +20,4 @@ from . import gpu_broker, run_poller, stage6_infra
 from .secrets import load_secrets, secret_path
 
 __all__ = ["gpu_broker", "stage6_infra", "run_poller", "load_secrets", "secret_path"]
-__version__ = "0.2.0"
+__version__ = "0.2.3"

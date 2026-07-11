@@ -68,6 +68,15 @@ class Receipt:
     full_cmd: str = ""
     code_dir: str = ""       # local dir containing the experiment code
     remote_dest: str = ""    # remote workspace dest (relative)
+    # strict_provenance fields the server requires; forwarded to fast_submit
+    # when set (empty -> flag omitted -> server default / rejection surfaces)
+    gpu: str = ""
+    data_version: str = ""
+    random_seed: str = ""    # str: "" means "unset", distinct from seed 0
+    git_commit: str = ""
+    estimated_hours: str = ""
+    use_spot: str = ""       # "" | "true" | "false"
+    retry_until_up: bool = False
 
     @property
     def ok(self) -> bool:
@@ -212,6 +221,18 @@ def submit(receipt: Receipt, scripts: dict, config_path: str, kind: str = "smoke
     submit_args = ["bash", scripts["fast_submit.sh"], "--config", config_path, "--cmd", cmd]
     if receipt.remote_dest:
         submit_args += ["--workdir", receipt.remote_dest]
+    # forward provenance/backend fields the strict server requires (P0):
+    # the documented submit() path must supply them, not only the CLI
+    for flag, val in (("--gpu", receipt.gpu),
+                      ("--data-version", receipt.data_version),
+                      ("--random-seed", receipt.random_seed),
+                      ("--git-commit", receipt.git_commit),
+                      ("--estimated-hours", receipt.estimated_hours),
+                      ("--use-spot", receipt.use_spot)):
+        if val:
+            submit_args += [flag, str(val)]
+    if receipt.retry_until_up:
+        submit_args += ["--retry-until-up"]
     rc, out = _run(submit_args, run_env)
     rid = _extract_run_id(out)
     if rc != 0 or not rid:
