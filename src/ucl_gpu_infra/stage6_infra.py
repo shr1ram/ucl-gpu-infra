@@ -1,21 +1,11 @@
-"""Deterministic, parameterised Stage-6 experiment submission (#156).
+"""Experiment submission to the GPU-infra shim.
 
-The engine drives the experiment submission itself instead of relying on the
-runner agent to invoke the ``experiment-infra`` skill (which it does
-unreliably — it stubs, and the gate then auto-approves a paper on no real
-data). This module is the engine-side analogue of ``aigraph_grounding`` for
-Stage 3: **deterministic but fully parameterised** —
-
-- the runnable entrypoint (smoke / full) is read from the Stage-6a receipt
-  (``stage6_implementation_receipt.md``), NOT hardcoded;
-- the submission uses the ``experiment-infra`` skill's OWN scripts
-  (``fast_push_code.sh`` / ``fast_submit.sh`` / ``fast_query_exp_status.sh``) —
-  the same contract the agent was supposed to use;
-- credentials come from ``INFRA_SERVER_URL`` / ``INFRA_SESSION_KEY`` (env);
-- nothing about a specific experiment is baked in.
-
-Never raises — every entry point returns a structured result so the engine can
-HOLD (not fake-advance) when infra is unavailable.
+Push a code dir and submit a run via the shim's scripts (fast_push_code.sh /
+fast_submit.sh / fast_query_exp_status.sh), with credentials from
+INFRA_SERVER_URL / INFRA_SESSION_KEY (env). A Receipt is a plain data carrier
+(command, code dir, remote dest, plus strict-provenance fields); callers build
+it directly. submit() and query_status() never raise — they return structured
+results so a caller can HOLD when infra is unavailable.
 """
 from __future__ import annotations
 
@@ -32,42 +22,13 @@ from loguru import logger
 # find_infra_scripts when EXPERIMENT_INFRA_SCRIPTS is not set.
 _PACKAGED_INFRA_SCRIPTS = Path(__file__).resolve().parent / "scripts"
 
-# The Stage-6a receipt's "Runnable Entrypoint" section. We pull the first code
-# line under a "Smoke" / "Full" heading, and the local code dir + remote dest.
-_SMOKE_HEADER = re.compile(r"^#+.*\bsmoke\b", re.IGNORECASE | re.MULTILINE)
-_FULL_HEADER = re.compile(r"^#+.*\bfull\b", re.IGNORECASE | re.MULTILINE)
-_LOCAL_FILE = re.compile(r"(?:local file|local path)[^\n]*?(/[\w./+-]+)", re.IGNORECASE)
-_REMOTE_PATH = re.compile(r"(?:remote path|remote dest)[^\n]*?[`'\"]([\w][\w./+-]*)", re.IGNORECASE)
-# A run command: a line that invokes the entrypoint. Accept versioned/sourced
-# interpreters too — ``python3`` / ``python3.11`` (the ``\b`` after ``python``
-# never matched ``python3``, which silently dropped #156 to the agent runner),
-# and a leading ``. .venv/bin/activate &&`` that experiment receipts commonly emit.
-# The command body, sans surrounding anchors — reused by both patterns below.
-_CMD_BODY = (
-    r"(?:cd\s+\S+\s*&&\s*)?(?:\.?\s*\S*activate\s*&&\s*)?"
-    r"(?:python[0-9.]*|bash|accelerate|torchrun|uv(?:\s+run)?)\b"
-)
-# (1) a whole line that IS the command (optionally one wrapping backtick).
-_CMD_LINE = re.compile(
-    rf"^\s*`?({_CMD_BODY}[^`\n]+)`?\s*$",
-    re.IGNORECASE | re.MULTILINE,
-)
-# (2) a backtick-wrapped command anywhere on a line, e.g. a markdown bullet/label
-# like ``- **Smoke run**: `cd x && python y` `` — the proposer's actual output,
-# which (1) misses because the prose prefix pushes the command off line-start.
-# Backtick delimiting is the unambiguous signal, so we don't need line anchoring.
-_CMD_INLINE = re.compile(
-    rf"`({_CMD_BODY}[^`\n]+)`",
-    re.IGNORECASE,
-)
-
 
 @dataclass
 class Receipt:
     smoke_cmd: str = ""
     full_cmd: str = ""
     code_dir: str = ""       # local dir containing the experiment code
-    remote_dest: str = ""    # remote workspace dest (relative)
+    remote_dest: str = ""    # remote workspace dest
     # strict_provenance fields the server requires; forwarded to fast_submit
     # when set (empty -> flag omitted -> server default / rejection surfaces)
     gpu: str = ""
@@ -82,55 +43,6 @@ class Receipt:
     def ok(self) -> bool:
         return bool(self.smoke_cmd or self.full_cmd)
 
-
-def _find_cmd(text: str) -> str:
-    """The run command at the EARLIEST position in ``text`` — matched either as a
-    whole-line command or a backtick-wrapped one (markdown bullet/label form).
-
-    Selecting by first occurrence (not by which regex type matches first) matters
-    when both forms appear: e.g. an inline-backtick *smoke* command followed by a
-    later whole-line *full* command — picking by regex type would mis-parse the
-    full command as smoke. Returns "" if neither matches.
-    """
-    cands = [m for m in (_CMD_LINE.search(text), _CMD_INLINE.search(text)) if m]
-    if not cands:
-        return ""
-    return min(cands, key=lambda m: m.start()).group(1).strip()
-
-
-def _first_cmd_after(text: str, header_re: re.Pattern) -> str:
-    m = header_re.search(text)
-    if not m:
-        return ""
-    return _find_cmd(text[m.end():])
-
-
-def parse_receipt(text: str, project_id: str = "", iteration: str = "iter_001") -> Receipt:
-    """Extract the runnable entrypoints + code locations from a Stage-6a receipt.
-
-    Fully parameterised — reads what 6a wrote; nothing experiment-specific is
-    hardcoded. ``remote_dest`` falls back to ``omc/<pid>/<iter>`` when the
-    receipt doesn't name one.
-    """
-    text = text or ""
-    smoke = _first_cmd_after(text, _SMOKE_HEADER)
-    full = _first_cmd_after(text, _FULL_HEADER)
-    if not smoke and not full:
-        # no explicit smoke/full headings — take the first run command in the file
-        smoke = _find_cmd(text)
-    lf = _LOCAL_FILE.search(text)
-    code_dir = ""
-    if lf:
-        p = Path(lf.group(1))
-        code_dir = str(p.parent if p.suffix else p)
-    rp = _REMOTE_PATH.search(text)
-    remote_dest = ""
-    if rp:
-        rp_p = Path(rp.group(1))
-        remote_dest = str(rp_p.parent if rp_p.suffix else rp_p)
-    if not remote_dest and project_id:
-        remote_dest = f"omc/{project_id}/{iteration}"
-    return Receipt(smoke_cmd=smoke, full_cmd=full, code_dir=code_dir, remote_dest=remote_dest)
 
 
 @dataclass
@@ -187,7 +99,7 @@ def _extract_run_id(out: str) -> str:
         if isinstance(d, dict) and d.get("run_id"):
             return str(d["run_id"])
     except Exception as exc:  # noqa: BLE001
-        logger.debug("[stage6] run_id JSON parse failed ({}); trying regex", exc)
+        logger.debug("[infra-submit] run_id JSON parse failed ({}); trying regex", exc)
     m = re.search(r'"run_id"\s*:\s*"([^"]+)"', out) or re.search(r"\b(run_[0-9a-f]{8,})\b", out)
     return m.group(1) if m else ""
 
@@ -209,7 +121,8 @@ def submit(receipt: Receipt, scripts: dict, config_path: str, kind: str = "smoke
         return SubmitResult(ok=False, kind=kind, error=f"no {kind} command in receipt")
     run_env = dict(env or os.environ, INFRA_SERVER_URL=url, INFRA_SESSION_KEY=key)
 
-    if receipt.code_dir and receipt.remote_dest and "push" not in (os.environ.get("STAGE6_SKIP_PUSH") or ""):
+    _skip_push = os.environ.get("INFRA_SKIP_PUSH") or os.environ.get("STAGE6_SKIP_PUSH") or ""
+    if receipt.code_dir and receipt.remote_dest and "push" not in _skip_push:
         rc, out = _run(["bash", scripts["fast_push_code.sh"], receipt.code_dir, receipt.remote_dest], run_env)
         if rc != 0:
             return SubmitResult(ok=False, kind=kind, error=f"push failed: {out[:200]}")
