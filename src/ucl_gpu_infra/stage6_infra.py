@@ -209,7 +209,12 @@ def submit(receipt: Receipt, scripts: dict, config_path: str, kind: str = "smoke
         return SubmitResult(ok=False, kind=kind, error=f"no {kind} command in receipt")
     run_env = dict(env or os.environ, INFRA_SERVER_URL=url, INFRA_SESSION_KEY=key)
 
-    if receipt.code_dir and receipt.remote_dest and "push" not in (os.environ.get("STAGE6_SKIP_PUSH") or ""):
+    # read the skip-push switch from run_env (the resolved submission env), not
+    # os.environ — otherwise a caller passing it via env= is silently ignored
+    # (cubic PR#3 P2). INFRA_SKIP_PUSH is the current name; STAGE6_SKIP_PUSH the
+    # back-compat alias.
+    skip_push = run_env.get("INFRA_SKIP_PUSH") or run_env.get("STAGE6_SKIP_PUSH") or ""
+    if receipt.code_dir and receipt.remote_dest and "push" not in skip_push:
         rc, out = _run(["bash", scripts["fast_push_code.sh"], receipt.code_dir, receipt.remote_dest], run_env)
         if rc != 0:
             return SubmitResult(ok=False, kind=kind, error=f"push failed: {out[:200]}")
