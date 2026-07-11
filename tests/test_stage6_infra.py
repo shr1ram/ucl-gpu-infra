@@ -56,8 +56,11 @@ def test_skip_push_honored_from_submission_env(monkeypatch):
     monkeypatch.delenv("INFRA_SKIP_PUSH", raising=False)
     monkeypatch.delenv("STAGE6_SKIP_PUSH", raising=False)
     r = s6.Receipt(smoke_cmd="python x.py", code_dir="/tmp/c", remote_dest="d")
-    s6.submit(r, {"fast_push_code.sh": "/y", "fast_submit.sh": "/x"},
+    push_path, submit_path = "/scripts/push.sh", "/scripts/submit.sh"
+    s6.submit(r, {"fast_push_code.sh": push_path, "fast_submit.sh": submit_path},
               config_path="", env={"INFRA_SERVER_URL": "u", "INFRA_SESSION_KEY": "k",
                                     "INFRA_SKIP_PUSH": "push"})
-    # push was skipped -> only the submit call ran, no push call
-    assert not any("fast_push_code.sh" in a for a in calls), "push not skipped via env="
+    # each call is ["bash", <script_path>, ...]; assert the PUSH script never ran
+    ran_scripts = [a[1] for a in calls if len(a) > 1]
+    assert push_path not in ran_scripts, f"push not skipped via env=; ran {ran_scripts}"
+    assert submit_path in ran_scripts, "submit should still run"
