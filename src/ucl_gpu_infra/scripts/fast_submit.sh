@@ -10,7 +10,7 @@
 # shim's metadata; the shim runs --cmd in its workspace on its own GPU box.
 set -euo pipefail
 CONFIG=""; CMD=""; WORKDIR=""
-GPU=""; DATA_VERSION=""; RANDOM_SEED=""; GIT_COMMIT=""; ESTIMATED_HOURS=""
+GPU=""; DATA_VERSION=""; RANDOM_SEED=""; GIT_COMMIT=""; ESTIMATED_HOURS=""; USE_SPOT=""; RETRY_UNTIL_UP=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --config)          CONFIG="${2:-}"; shift 2 ;;
@@ -21,6 +21,8 @@ while [ $# -gt 0 ]; do
     --random-seed)     RANDOM_SEED="${2:-}"; shift 2 ;;
     --git-commit)      GIT_COMMIT="${2:-}"; shift 2 ;;
     --estimated-hours) ESTIMATED_HOURS="${2:-}"; shift 2 ;;
+    --use-spot)        USE_SPOT="${2:-}"; shift 2 ;;
+    --retry-until-up)  RETRY_UNTIL_UP="${2:-}"; shift 2 ;;
     *) shift ;;
   esac
 done
@@ -40,7 +42,7 @@ fi
 # (cubic).
 SHIM_KEY="$KEY" SHIM_CMD="$CMD" SHIM_CFG="$cfg_json" SHIM_WD="$WORKDIR" \
 SHIM_GPU="$GPU" SHIM_DV="$DATA_VERSION" SHIM_SEED="$RANDOM_SEED" \
-SHIM_GIT="$GIT_COMMIT" SHIM_HOURS="$ESTIMATED_HOURS" python3 -c '
+SHIM_GIT="$GIT_COMMIT" SHIM_HOURS="$ESTIMATED_HOURS" SHIM_SPOT="$USE_SPOT" SHIM_RETRY="$RETRY_UNTIL_UP" python3 -c '
 import json, os
 cfg = os.environ.get("SHIM_CFG", "{}")
 try:
@@ -58,6 +60,8 @@ if os.environ.get("SHIM_DV"):    body["data_version"] = os.environ["SHIM_DV"]
 if os.environ.get("SHIM_SEED"):  body["random_seed"] = int(os.environ["SHIM_SEED"])
 if os.environ.get("SHIM_GIT"):   body["git_commit"] = os.environ["SHIM_GIT"]
 if os.environ.get("SHIM_HOURS"): body["estimated_hours"] = float(os.environ["SHIM_HOURS"])
+if os.environ.get("SHIM_SPOT"):  body["use_spot"] = os.environ["SHIM_SPOT"].lower() in ("1","true","yes")
+if os.environ.get("SHIM_RETRY"): body["config"] = {**body.get("config", {}), "retry_until_up": os.environ["SHIM_RETRY"].lower() in ("1","true","yes")}
 print(json.dumps(body))
 ' | curl -fsS -m 60 -X POST "${URL%/}/api/submit" \
   -H 'Content-Type: application/json' --data @-
